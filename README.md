@@ -1,4 +1,4 @@
-# proxmox_forward_port
+# Proxmox forward port
 Bash script to auto port forward when create new CT in Proxmox
 
 ## Install
