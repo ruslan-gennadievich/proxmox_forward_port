@@ -28,10 +28,16 @@ inotifywait -m /etc/pve/lxc -e delete,move |
         fi
         if [[ $action == 'DELETE' ]]; then
                 IP_VM=`cat /tmp/ct_$file`
+                IP_VM_ID=$(echo $IP_VM | awk -F '.' '{print $4}')
                 rm /tmp/ct_$file
                 RULE_NUM='0'
+                if [[ $IP_VM_ID == $ID_VM ]]; then
+                        grp="$IP_VM"
+                else
+                        grp=":$ID_VM"
+                fi
                 while [[ $RULE_NUM != "" ]]; do
-                        RULE_NUM=`iptables -n -L -v -t nat --line-numbers | grep $IP_VM | awk '{print $1}' | head -n1`
+                        RULE_NUM=`iptables -n -L -v -t nat --line-numbers | grep $grp | awk '{print $1}' | head -n1`
                         if [[ $RULE_NUM != "" ]]; then
                                 echo "iptables -t nat -D PREROUTING $RULE_NUM"
                                 iptables -t nat -D PREROUTING $RULE_NUM
