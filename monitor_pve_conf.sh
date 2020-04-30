@@ -8,55 +8,70 @@
 # Copyright (c) 2020 ruslan-gennadievich
 # MIT License
 
-TMPDIR_SAVE_VM_FILE="/etc/pve/forwarded_vm/'"
+TMPDIR_SAVE_VM_FILE="/etc/pve/forwarded_vm/"
 LOG="/var/log/monitor_pve_conf.log"
 ARR_PORTS_FOR_FORWARD=(22 80 81 443)
 USE_VMID_FOR_PORTFORWARD=true #if false - get IP from vm.conf file
+AUTOGEN_IP_FROM_VMID=true
 IP_PREFIX="192.168.0."
 HOSTNAME=`cat /etc/hostname`
 
-mkdir -p $TMPDIR_SAVE_CT_FILE
+ME="${0##*/}"
+ME_COUNT=$(ps aux | grep $ME | wc -l)
+if [[ "$ME_COUNT" > 3 ]]; then
+        echo "Another $ME is running. Please kill him"
+        exit 1
+fi
+mkdir -p "$TMPDIR_SAVE_VM_FILE"
 inotifywait -m /etc/pve/lxc /etc/pve/qemu-server -e delete,move |
     while read dir action file; do
+        if [[ -f $dir/$file && `cat $dir/$file | grep "template: 1"` == "template: 1" ]]; then
+                echo "Ignore template $dir/$file"
+                continue
+        fi
         ID_VM=$(basename -- $file .conf)
         if [[ $action == 'MOVED_TO' ]]; then
-                if [ -f $dir/$file ]; then
-                        if $USE_VMID_FOR_PORTFORWARD; then
-                                #Get IP from IP_PREFIX+VMID
+                if [[ $ID_VM != "" && ! -f $(echo $TMPDIR_SAVE_VM_FILE)ctvm_$file ]]; then
+                        echo $dir/$file
+                        sleep 10
+                        sed -i 's:#.*$::g' $dir/$file #clean file from old comments                        
+                        IP_VM=`cat $dir/$file | grep "^[^#;]" | grep -E -o "ip=([0-9]{1,3}[\.]){3}[0-9]{1,3}" | cut -c 4-`
+                        if [[ $IP_VM == "" ]]; then
+                                # if this qemu-server conf file, make IP from PREFIX+VMID
                                 IP_VM="$(echo $IP_PREFIX)$(echo $ID_VM)"
-                        else
-                                #Get IP from VM.conf
-                                IP_VM=`cat $dir/$file | grep "^[^#;]" | grep -E -o "^[^#;] ip=([0-9]{1,3}[\.]){3}[0-9]{1,3}" | cut -c 4-`
-                                if [ $IP_VM == "" ]; then
-                                        # if this qemu-server conf file, make IP from PREFIX+VMID
-                                        IP_VM="$(echo $IP_PREFIX)$(echo $ID_VM)"
+                                if $AUTOGEN_IP_FROM_VMID; then
+                                        sed -i "s/type=veth/type=veth,ip=$IP_VM\/24,gw=$(echo $IP_PREFIX)1/g" $dir/$file
                                 fi
-                        fi                        
-                        if [[ $ID_VM != "" && ! -f $(echo $TMPDIR_SAVE_VM_FILE)ctvm_$file ]]; then
-                                echo "$IP_VM" > $(echo $TMPDIR_SAVE_VM_FILE)ctvm_$file
-                                echo "--- Run commands at `date`:"
-                                echo "--- Run commands at `date`:" >> $LOG
-                                for port in ${ARR_PORTS_FOR_FORWARD[*]} do
-                                        CMD="iptables -A PREROUTING -t nat -d $HOSTNAME/32 -p tcp -m tcp --dport $(echo $ID_VM)$port -j DNAT --to-destination $IP_VM:$port"
-                                        echo $CMD
-                                        echo $CMD >> $LOG
-                                        eval $CMD
-                                done                                
-                                CMD="iptables-save > /etc/iptables.up.rules"
+                        fi
+                        if $USE_VMID_FOR_PORTFORWARD; then                                
+                                NEW_IP_VM="$(echo $IP_PREFIX)$(echo $ID_VM)" #Get IP from IP_PREFIX+VMID                                
+                                if [[ $AUTOGEN_IP_FROM_VMID && $IP_VM != $NEW_IP_VM ]]; then                                        
+                                        sed -i "s/ip=$IP_VM/ip=$NEW_IP_VM/g" $dir/$file
+                                fi                                
+                                IP_VM=$NEW_IP_VM
+                        fi
+                        echo "$IP_VM" > $(echo $TMPDIR_SAVE_VM_FILE)ctvm_$file
+                        echo "--- Run commands at `date`:"
+                        echo "--- Run commands at `date`:" >> $LOG                        
+                        echo "#Ports forward:" >> $dir/$file #Add comment to CT/VM
+                        for port in ${ARR_PORTS_FOR_FORWARD[*]}; do
+                                PORT_FORWARD="$(echo $ID_VM)$port"
+                                if [[ $(($PORT_FORWARD)) > 65535 ]]; then
+                                        port=`echo $port | cut -c -5`
+                                fi
+                                CMD="iptables -A PREROUTING -t nat -d $HOSTNAME/32 -p tcp -m tcp --dport $(echo $ID_VM)$port -j DNAT --to-destination $IP_VM:$port"
+                                echo $CMD
                                 echo $CMD >> $LOG
                                 eval $CMD
-                                # Add comment to CT
-                                sleep 4
-                                echo "#Ports forward:" >> $dir/$file
-                                echo "#$HOSTNAME:$(echo $ID_VM)22 -> $IP_VM:22" >> $dir/$file
-                                echo "#$HOSTNAME:$(echo $ID_VM)80 -> $IP_VM:80" >> $dir/$file
-                                echo "#$HOSTNAME:$(echo $ID_VM)81 -> $IP_VM:81" >> $dir/$file
-                                echo "#$HOSTNAME:$(echo $ID_VM)43 -> $IP_VM:443" >> $dir/$file
-                        fi
+                                echo "#$HOSTNAME:$(echo $ID_VM)$port -> $IP_VM:$port" >> $dir/$file #Add comment to CT/VM
+                        done
+                        CMD="iptables-save > /etc/iptables.up.rules"
+                        echo $CMD >> $LOG
+                        eval $CMD
                 fi
         fi
         if [[ $action == 'DELETE' ]]; then
-                IP_VM=`cat $(echo $TMPDIR_SAVE_VM_FILE)ctvm_$file`                        
+                IP_VM=`cat $(echo $TMPDIR_SAVE_VM_FILE)ctvm_$file`
                 rm $(echo $TMPDIR_SAVE_VM_FILE)ctvm_$file
                 RULE_NUM='0'
                 echo "--- Run commands at `date`:"
