@@ -66,7 +66,7 @@ inotifywait -m /etc/pve/lxc /etc/pve/qemu-server -e delete,move |
                                 echo $CMD
                                 echo $CMD >> $LOG
                                 eval $CMD
-                                echo "#$HOSTNAME:$(echo $ID_VM)$port -> $IP_VM:$port" >> $dir/$file #Add comment to CT/VM
+                                echo "#$HOSTNAME:$PORT_FORWARD -> $IP_VM:$port" >> $dir/$file #Add comment to CT/VM
                         done
                         CMD="iptables-save > /etc/iptables.up.rules"
                         echo $CMD >> $LOG
