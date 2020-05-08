@@ -11,10 +11,12 @@
 TMPDIR_SAVE_VM_FILE="/etc/pve/forwarded_vm/"
 LOG="/var/log/monitor_pve_conf.log"
 ARR_PORTS_FOR_FORWARD=(22 80 81 443)
-USE_VMID_FOR_PORTFORWARD=true #if false - get IP from vm.conf file
-AUTOGEN_IP_FROM_VMID=true
+USE_VMID_FOR_PORTFORWARD=true #true - make IP from VMID, false - get IP from vm.conf file
+AUTOGEN_IP_FROM_VMID=true #for new VM
 IP_PREFIX="192.168.0."
 HOSTNAME=`cat /etc/hostname`
+
+echo "`date` start monitor_pve_conf.sh" >> $LOG
 
 ME="${0##*/}"
 ME_COUNT=$(ps aux | grep $ME | wc -l)
@@ -34,7 +36,7 @@ inotifywait -m /etc/pve/lxc /etc/pve/qemu-server -e delete,move |
                 if [[ $ID_VM != "" && ! -f $(echo $TMPDIR_SAVE_VM_FILE)ctvm_$file ]]; then
                         echo $dir/$file
                         sleep 10
-                        sed -i 's:#.*$::g' $dir/$file #clean file from old comments                        
+                        sed -i 's:#.*$::g' $dir/$file #clean file from old comments
                         IP_VM=`cat $dir/$file | grep "^[^#;]" | grep -E -o "ip=([0-9]{1,3}[\.]){3}[0-9]{1,3}" | cut -c 4-`
                         if [[ $IP_VM == "" ]]; then
                                 # if this qemu-server conf file, make IP from PREFIX+VMID
@@ -43,23 +45,24 @@ inotifywait -m /etc/pve/lxc /etc/pve/qemu-server -e delete,move |
                                         sed -i "s/type=veth/type=veth,ip=$IP_VM\/24,gw=$(echo $IP_PREFIX)1/g" $dir/$file
                                 fi
                         fi
-                        if $USE_VMID_FOR_PORTFORWARD; then                                
-                                NEW_IP_VM="$(echo $IP_PREFIX)$(echo $ID_VM)" #Get IP from IP_PREFIX+VMID                                
-                                if [[ $AUTOGEN_IP_FROM_VMID && $IP_VM != $NEW_IP_VM ]]; then                                        
+                        if $USE_VMID_FOR_PORTFORWARD; then
+                                NEW_IP_VM="$(echo $IP_PREFIX)$(echo $ID_VM)" #Get IP from IP_PREFIX+VMID
+                                if [[ $AUTOGEN_IP_FROM_VMID && $IP_VM != $NEW_IP_VM ]]; then
                                         sed -i "s/ip=$IP_VM/ip=$NEW_IP_VM/g" $dir/$file
                                 fi                                
                                 IP_VM=$NEW_IP_VM
                         fi
                         echo "$IP_VM" > $(echo $TMPDIR_SAVE_VM_FILE)ctvm_$file
                         echo "--- Run commands at `date`:"
-                        echo "--- Run commands at `date`:" >> $LOG                        
+                        echo "--- Run commands at `date`:" >> $LOG
                         echo "#Ports forward:" >> $dir/$file #Add comment to CT/VM
                         for port in ${ARR_PORTS_FOR_FORWARD[*]}; do
-                                PORT_FORWARD="$(echo $ID_VM)$port"
-                                if [[ $(($PORT_FORWARD)) > 65535 ]]; then
-                                        port=`echo $port | cut -c -5`
-                                fi
-                                CMD="iptables -A PREROUTING -t nat -d $HOSTNAME/32 -p tcp -m tcp --dport $(echo $ID_VM)$port -j DNAT --to-destination $IP_VM:$port"
+                                USEDPORT="1"
+                                while [[ $USEDPORT != "" ]]; do
+                                        PORT_FORWARD=$(( ((RANDOM<<15)|RANDOM) % 65535 + 1000))
+                                        USEDPORT=`iptables -n -L -v -t nat --line-numbers | grep "dpt:$PORT_FORWARD" | head -n1`
+                                done
+                                CMD="iptables -A PREROUTING -t nat -d $HOSTNAME/32 -p tcp -m tcp --dport $PORT_FORWARD -j DNAT --to-destination $IP_VM:$port"
                                 echo $CMD
                                 echo $CMD >> $LOG
                                 eval $CMD
