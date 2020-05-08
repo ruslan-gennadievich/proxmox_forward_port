@@ -82,8 +82,9 @@ inotifywait -m /etc/pve/lxc /etc/pve/qemu-server -e delete,move |
                 while [[ $RULE_NUM != "" ]]; do
                         RULE_NUM=`iptables -n -L -v -t nat --line-numbers | grep $IP_VM | awk '{print $1}' | head -n1`
                         if [[ $RULE_NUM != "" ]]; then
-                                echo "iptables -t nat -D PREROUTING $RULE_NUM"
-                                iptables -t nat -D PREROUTING $RULE_NUM
+                                CMD="iptables -t nat -D PREROUTING $RULE_NUM"
+                                echo $CMD >> $LOG
+                                eval $CMD
                         fi
                 done
                 CMD="iptables-save > /etc/iptables.up.rules"
